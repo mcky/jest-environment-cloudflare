@@ -1,6 +1,10 @@
 const NodeEnvironment = require('jest-environment-node')
+const { ModuleMocker } = require('jest-mock')
 const cloudworker = require('@dollarshaveclub/cloudworker')
 const mockFetch = require('./mock-fetch')
+
+const moduleMocker = new ModuleMocker(global)
+const jestFn = moduleMocker.fn.bind(moduleMocker)
 
 const cfRequestHeaders = {
   asn: '395747',
@@ -56,12 +60,23 @@ class CloudflareEnvironment extends NodeEnvironment {
           enumerable: false,
         })
 
+        const promiseQueue = []
+
         const mockedEvent = {
           request,
-          waitUntil: async (...args) => {
-            // @TODO
-          },
+          waitUntil: jestFn(async (thenable) => {
+            promiseQueue.push(thenable)
+
+            try {
+              await thenable
+            } catch (err) {
+              console.error(err)
+              reject(err)
+            }
+          }),
           respondWith: async (response) => {
+            await Promise.all(promiseQueue)
+
             try {
               const res = await response
               resolve(res)
@@ -71,6 +86,8 @@ class CloudflareEnvironment extends NodeEnvironment {
             }
           },
         }
+
+        this.global.worker.event = mockedEvent
 
         try {
           fetchHandler(mockedEvent)
